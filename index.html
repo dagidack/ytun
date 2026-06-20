@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Photo Liquid Volume Calculator</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Cropper.js -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+    <style>
+        body { overscroll-behavior-y: none; }
+        .no-select { user-select: none; -webkit-user-select: none; }
+        .measure-area { touch-action: none; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-900 font-sans pb-10">
+
+    <!-- Language selector -->
+    <div class="max-w-2xl mx-auto pt-4 px-4 flex justify-end items-center">
+        <select id="langSelect" onchange="translatePage(this.value)" class="bg-white border border-gray-300 text-gray-700 text-sm rounded-xl focus:ring-black focus:border-black block p-2 shadow-sm outline-none cursor-pointer hover:bg-gray-100 transition-all font-medium">
+            <!-- Populated via JS -->
+        </select>
+    </div>
+
+    <div class="max-w-2xl mx-auto pt-4 px-4">
+        
+        <div class="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
+            <!-- Header -->
+            <div class="bg-black p-4 text-center">
+                <h1 class="text-xl font-bold text-white" data-i18n="title">Volume measurement from photo</h1>
+            </div>
+
+            <div class="p-6">
+                <!-- Global input: Total Volume -->
+                <div class="mb-6 bg-gray-100 p-4 rounded-xl border border-gray-200">
+                    <label for="totalVolume" class="block text-sm font-semibold text-black mb-2" data-i18n="step1Title">
+                        1. Volume of the whole bottle (in milliliters)
+                    </label>
+                    <input type="number" id="totalVolume" data-i18n-placeholder="step1Placeholder" placeholder="Example: 500" value="500"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-lg font-bold text-black shadow-sm transition-all"
+                        oninput="recalculateIfMeasuring()">
+                </div>
+
+                <!-- STEP 1: UPLOAD AND CROP -->
+                <div id="step-upload">
+                    <h2 class="text-lg font-bold mb-3 text-black" data-i18n="step2Title">2. Upload and crop your photo</h2>
+                    <p class="text-sm text-gray-600 mb-4" data-i18n="step2Desc">
+                        Select a photo of the bottle. Then crop the image so that the top frame is exactly at the top level of the bottle (where 100%), and the bottom frame is at the very bottom (where 0%).
+                    </p>
+
+                    <!-- Example -->
+                    <div class="mb-4 flex items-center bg-gray-50 p-3 rounded-xl border border-gray-200">
+                        <div class="w-16 h-20 flex-shrink-0 bg-white rounded-lg border border-gray-300 flex items-center justify-center relative overflow-hidden shadow-sm">
+                            <!-- Bottle SVG -->
+                            <svg width="24" height="40" viewBox="0 0 24 40" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M8 2h8v4h-8z"/>
+                                <path d="M8 6c-3 3-4 5-4 10v22h16V16c0-5-1-7-4-10"/>
+                                <path d="M4 24h16" stroke="gray" stroke-dasharray="2 2"/>
+                            </svg>
+                            <!-- Crop lines -->
+                            <div class="absolute top-0 left-0 w-full border-t-4 border-black border-dashed"></div>
+                            <div class="absolute bottom-0 left-0 w-full border-b-4 border-black border-dashed"></div>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-bold text-black" data-i18n="exampleTitle">Example in frame:</p>
+                            <p class="text-xs text-gray-600 mt-0.5" data-i18n="exampleDesc">Trimming boundaries (dashed lines) strictly along the neck and bottom.</p>
+                        </div>
+                    </div>
+
+                    <label class="block w-full cursor-pointer bg-gray-50 border-2 border-dashed border-gray-300 hover:border-black hover:bg-gray-100 transition-colors rounded-xl p-8 text-center mb-4">
+                        <span class="text-black font-bold text-lg block mb-1" data-i18n="uploadMain">Click to select photo</span>
+                        <span class="text-gray-500 text-sm block" data-i18n="uploadSub">JPG, PNG supported</span>
+                        <input type="file" id="imageInput" accept="image/*" class="hidden">
+                    </label>
+
+                    <!-- Cropper Container -->
+                    <div id="cropper-container" class="hidden mb-4">
+                        <div class="max-h-[50vh] bg-black rounded-lg overflow-hidden border border-gray-300">
+                            <img id="imageToCrop" src="" alt="Original" class="max-w-full">
+                        </div>
+                        <button onclick="cropImage()" class="mt-4 w-full bg-black hover:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl shadow-md transition-colors text-lg" data-i18n="cropBtn">
+                            Confirm crop
+                        </button>
+                    </div>
+                </div>
+
+                <!-- STEP 2: MEASURE -->
+                <div id="step-measure" class="hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-bold text-black" data-i18n="step3Title">3. Indicate liquid level</h2>
+                        <button onclick="resetApp()" class="text-sm text-black font-semibold underline hover:text-gray-600" data-i18n="resetBtn">
+                            Upload another photo
+                        </button>
+                    </div>
+                    <p class="text-sm text-gray-600 mb-4" data-i18n="step3Desc">
+                        Drag the line up and down to align it with the actual liquid level in the bottle.
+                    </p>
+
+                    <!-- Measuring Area -->
+                    <div class="flex justify-center bg-gray-100 rounded-xl p-4 overflow-hidden border border-gray-200 shadow-inner no-select">
+                        <div id="measureBox" class="relative measure-area cursor-crosshair inline-block">
+                            <!-- Cropped Image -->
+                            <img id="croppedImage" src="" alt="Cropped bottle" class="max-h-[50vh] w-auto block opacity-90 pointer-events-none rounded">
+                            
+                            <!-- Interactive Line (Now Black/White) -->
+                            <div id="measureLine" class="absolute left-0 right-0 border-b-2 border-black z-10" style="top: 50%;">
+                                <!-- Draggable handle -->
+                                <div class="absolute -left-6 top-1/2 transform -translate-y-1/2 w-6 h-6 bg-black rounded-full border-2 border-white shadow-md flex items-center justify-center">
+                                    <div class="w-3 h-0.5 bg-white"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Result -->
+                    <div class="mt-6 bg-white border-4 border-black rounded-xl p-5 text-center">
+                        <p class="text-black font-bold mb-1" data-i18n="resultTitle">Estimated liquid volume:</p>
+                        <div class="flex items-baseline justify-center gap-2">
+                            <span id="finalVolume" class="text-5xl font-black text-black">0</span>
+                            <span class="text-2xl font-bold text-gray-600" data-i18n="ml">ml</span>
+                        </div>
+                        <p class="text-sm text-black mt-2 font-bold bg-gray-100 inline-block px-3 py-1 rounded-full">
+                            <span id="finalPercentValue">0</span>% <span data-i18n="percentSuffix">of volume</span>
+                            <span class="opacity-50 mx-1">|</span> 
+                            <span id="finalLitersValue">0</span> <span data-i18n="liters">L</span>
+                        </p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Instructions -->
+        <div class="mt-6 bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden p-6">
+            <h3 class="text-lg font-bold text-black mb-4 text-center" data-i18n="instructionTitle">How to get an accurate result?</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Rule 1 -->
+                <div class="flex flex-col items-center text-center">
+                    <div class="w-14 h-14 bg-gray-100 text-black rounded-full flex items-center justify-center mb-3">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="7" width="18" height="10" rx="2" ry="2" />
+                            <circle cx="12" cy="12" r="3" />
+                            <path d="M2 12h20" stroke-dasharray="4 4"/>
+                        </svg>
+                    </div>
+                    <p class="text-sm font-bold text-black" data-i18n="inst1Title">Hold your phone straight</p>
+                    <p class="text-xs text-gray-600 mt-1" data-i18n="inst1Desc">Shoot strictly at the level of the bottle. Do not tilt the camera up or down.</p>
+                </div>
+                <!-- Rule 2 -->
+                <div class="flex flex-col items-center text-center">
+                    <div class="w-14 h-14 bg-gray-100 text-black rounded-full flex items-center justify-center mb-3">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 20h20" />
+                            <rect x="8" y="6" width="8" height="14" rx="2" />
+                            <path d="M10 6V3h4v3" />
+                        </svg>
+                    </div>
+                    <p class="text-sm font-bold text-black" data-i18n="inst2Title">Flat surface</p>
+                    <p class="text-xs text-gray-600 mt-1" data-i18n="inst2Desc">Place the bottle on a flat table. The liquid surface must be strictly horizontal.</p>
+                </div>
+                <!-- Rule 3 -->
+                <div class="flex flex-col items-center text-center">
+                    <div class="w-14 h-14 bg-gray-100 text-black rounded-full flex items-center justify-center mb-3">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="5" />
+                            <line x1="12" y1="1" x2="12" y2="3" />
+                            <line x1="12" y1="21" x2="12" y2="23" />
+                            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                            <line x1="1" y1="12" x2="3" y2="12" />
+                            <line x1="21" y1="12" x2="23" y2="12" />
+                            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                        </svg>
+                    </div>
+                    <p class="text-sm font-bold text-black" data-i18n="inst3Title">Good lighting</p>
+                    <p class="text-xs text-gray-600 mt-1" data-i18n="inst3Desc">Shoot in good light so that the liquid boundary is clearly visible during measurement.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Warning -->
+        <div class="mt-4 bg-gray-100 border-l-4 border-black p-4 rounded-r-lg shadow-sm">
+            <div class="flex items-start">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-black" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <p class="text-sm text-black" data-i18n="warningText">
+                        <strong>Attention:</strong> Calculation results are approximate. The method divides the height equally, which is ideal for flat cylindrical bottles. If the bottle has a complex or tapering neck, the error in these areas will be higher.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // === CALCULATOR LOGIC ===
+        let cropper = null;
+        let currentParts = 500;
+
+        const imageInput = document.getElementById('imageInput');
+        const imageToCrop = document.getElementById('imageToCrop');
+        const cropperContainer = document.getElementById('cropper-container');
+        const stepUpload = document.getElementById('step-upload');
+        const stepMeasure = document.getElementById('step-measure');
+        const croppedImage = document.getElementById('croppedImage');
+        
+        const measureBox = document.getElementById('measureBox');
+        const measureLine = document.getElementById('measureLine');
+        
+        const totalVolumeInput = document.getElementById('totalVolume');
+        const finalVolumeDisplay = document.getElementById('finalVolume');
+        const finalPercentValue = document.getElementById('finalPercentValue');
+        const finalLitersValue = document.getElementById('finalLitersValue');
+
+        imageInput.addEventListener('change', function(e) {
+            const files = e.target.files;
+            if (files && files.length > 0) {
+                const file = files[0];
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    imageToCrop.src = event.target.result;
+                    cropperContainer.classList.remove('hidden');
+                    if (cropper) cropper.destroy();
+                    cropper = new Cropper(imageToCrop, {
+                        viewMode: 1, dragMode: 'move', autoCropArea: 0.8,
+                        guides: true, center: true, highlight: false,
+                        cropBoxMovable: true, cropBoxResizable: true,
+                        toggleDragModeOnDblclick: false,
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function cropImage() {
+            if (!cropper) return;
+            const canvas = cropper.getCroppedCanvas();
+            if (!canvas) return;
+            croppedImage.src = canvas.toDataURL('image/jpeg');
+            stepUpload.classList.add('hidden');
+            stepMeasure.classList.remove('hidden');
+            setTimeout(() => {
+                const rect = measureBox.getBoundingClientRect();
+                updateLinePosition(rect.top + rect.height / 2);
+            }, 100);
+        }
+
+        let isDragging = false;
+        function updateLinePosition(clientY) {
+            const rect = measureBox.getBoundingClientRect();
+            let y = clientY - rect.top;
+            y = Math.max(0, Math.min(y, rect.height));
+            measureLine.style.top = y + 'px';
+            
+            let rawParts = (1 - (y / rect.height)) * 1000;
+            currentParts = Math.round(rawParts);
+            calculateResult();
+        }
+
+        measureBox.addEventListener('mousedown', (e) => { isDragging = true; updateLinePosition(e.clientY); });
+        window.addEventListener('mousemove', (e) => { if (isDragging) updateLinePosition(e.clientY); });
+        window.addEventListener('mouseup', () => { isDragging = false; });
+        measureBox.addEventListener('touchstart', (e) => { isDragging = true; updateLinePosition(e.touches[0].clientY); }, { passive: false });
+        window.addEventListener('touchmove', (e) => { if (isDragging) { updateLinePosition(e.touches[0].clientY); e.preventDefault(); } }, { passive: false });
+        window.addEventListener('touchend', () => { isDragging = false; });
+
+        function calculateResult() {
+            const totalVol = parseFloat(totalVolumeInput.value);
+            if (isNaN(totalVol) || totalVol <= 0) {
+                finalVolumeDisplay.innerText = "0";
+                finalPercentValue.innerText = "0";
+                finalLitersValue.innerText = "0";
+                return;
+            }
+            const percent = (currentParts / 1000) * 100;
+            const volume = (percent / 100) * totalVol;
+            const liters = volume / 1000;
+
+            finalVolumeDisplay.innerText = volume.toFixed(1).replace('.0', '');
+            finalPercentValue.innerText = percent.toFixed(1);
+            finalLitersValue.innerText = parseFloat(liters.toFixed(3));
+        }
+
+        function recalculateIfMeasuring() {
+            if (!stepMeasure.classList.contains('hidden')) calculateResult();
+        }
+
+        function resetApp() {
+            imageInput.value = '';
+            if (cropper) { cropper.destroy(); cropper = null; }
+            imageToCrop.src = '';
+            cropperContainer.classList.add('hidden');
+            stepMeasure.classList.add('hidden');
+            stepUpload.classList.remove('hidden');
+        }
+
+        // === TRANSLATION LOGIC ===
+        const originalTexts = {
+            "pageTitle": "Photo Liquid Volume Calculator",
+            "title": "Volume measurement from photo",
+            "step1Title": "1. Volume of the whole bottle (in milliliters)",
+            "step1Placeholder": "Example: 500",
+            "step2Title": "2. Upload and crop your photo",
+            "step2Desc": "Select a photo of the bottle. Then crop the image so that the top frame is exactly at the top level of the bottle (where 100%), and the bottom frame is at the very bottom (where 0%).",
+            "uploadMain": "Click to select photo",
+            "uploadSub": "JPG, PNG supported",
+            "cropBtn": "Confirm crop",
+            "step3Title": "3. Indicate liquid level",
+            "resetBtn": "Upload another photo",
+            "step3Desc": "Drag the line up and down to align it with the actual liquid level in the bottle.",
+            "resultTitle": "Estimated liquid volume:",
+            "ml": "ml",
+            "percentSuffix": "of volume",
+            "liters": "L",
+            "exampleTitle": "Example in frame:",
+            "exampleDesc": "Trimming boundaries (dashed lines) strictly along the neck and bottom.",
+            "instructionTitle": "How to get an accurate result?",
+            "inst1Title": "Hold your phone straight",
+            "inst1Desc": "Shoot strictly at the level of the bottle. Do not tilt the camera up or down.",
+            "inst2Title": "Flat surface",
+            "inst2Desc": "Place the bottle on a flat table. The liquid surface must be strictly horizontal.",
+            "inst3Title": "Good lighting",
+            "inst3Desc": "Shoot in good light so that the liquid boundary is clearly visible during measurement.",
+            "warningText": "Attention: Calculation results are approximate. The method divides the height equally, which is ideal for flat cylindrical bottles. If the bottle has a complex or tapering neck, the error in these areas will be higher."
+        };
+
+        const languages = {
+            "en": "🇬🇧 English", "ru": "🇷🇺 Русский (Russian)", "es": "🇪🇸 Español (Spanish)", "zh-CN": "🇨🇳 中文 (Chinese)",
+            "hi": "🇮🇳 हिन्दी (Hindi)", "ar": "🇸🇦 العربية (Arabic)", "fr": "🇫🇷 Français (French)", "bn": "🇧🇩 বাংলা (Bengali)",
+            "pt": "🇵🇹 Português (Portuguese)", "ur": "🇵🇰 اردو (Urdu)", "id": "🇮🇩 Bahasa Indonesia", "de": "🇩🇪 Deutsch (German)",
+            "ja": "🇯🇵 日本語 (Japanese)", "mr": "🇮🇳 मराठी (Marathi)", "te": "🇮🇳 తెలుగు (Telugu)", "tr": "🇹🇷 Türkçe (Turkish)",
+            "ta": "🇮🇳 தமிழ் (Tamil)", "vi": "🇻🇳 Tiếng Việt (Vietnamese)", "ko": "🇰🇷 한국어 (Korean)", "it": "🇮🇹 Italiano",
+            "pl": "🇵🇱 Polski", "uk": "🇺🇦 Українська", "nl": "🇳🇱 Nederlands", "th": "🇹🇭 ไทย (Thai)",
+            "gu": "🇮🇳 ગુજરાતી (Gujarati)", "fa": "🇮🇷 فارسی (Persian)", "ms": "🇲🇾 Bahasa Melayu", "kn": "🇮🇳 ಕನ್ನಡ (Kannada)",
+            "or": "🇮🇳 ଓଡ଼ିଆ (Odia)", "pa": "🇮🇳 ਪੰਜਾਬੀ (Punjabi)", "ro": "🇷🇴 Română", "cs": "🇨🇿 Čeština",
+            "sv": "🇸🇪 Svenska", "el": "🇬🇷 Ελληνικά (Greek)", "bg": "🇧🇬 Български", "he": "🇮🇱 עברית (Hebrew)",
+            "da": "🇩🇰 Dansk", "fi": "🇫🇮 Suomi", "hu": "🇭🇺 Magyar", "no": "🇳🇴 Norsk",
+            "sk": "🇸🇰 Slovenčina", "hr": "🇭🇷 Hrvatski", "sr": "🇷🇸 Српски", "sl": "🇸🇮 Slovenščina",
+            "lt": "🇱🇹 Lietuvių", "lv": "🇱🇻 Latviešu", "et": "🇪🇪 Eesti", "is": "🇮🇸 Íslenska",
+            "ga": "🇮🇪 Gaeilge", "cy": "🏴󠁧󠁢󠁷󠁬󠁳󠁿 Cymraeg", "mt": "🇲🇹 Malti", "sq": "🇦🇱 Shqip",
+            "mk": "🇲🇰 Македонски", "bs": "🇧🇦 Bosanski", "ka": "🇬🇪 ქართული", "hy": "🇦🇲 Հայերեն",
+            "az": "🇦🇿 Azərbaycan", "kk": "🇰🇿 Қазақша", "uz": "🇺🇿 Oʻzbekcha", "tk": "🇹🇲 Türkmençe",
+            "ky": "🇰🇬 Кыргызча", "tg": "🇹🇯 Тоҷикӣ", "mn": "🇲🇳 Монгол", "si": "🇱🇰 සිංහල (Sinhala)",
+            "my": "🇲🇲 မြန်မာ (Burmese)", "km": "🇰🇭 ខ្មែរ (Khmer)", "lo": "🇱🇦 ລາວ (Lao)", "am": "🇪🇹 አማርኛ (Amharic)",
+            "sw": "🇰🇪 Kiswahili", "zu": "🇿🇦 isiZulu", "xh": "🇿🇦 isiXhosa", "af": "🇿🇦 Afrikaans",
+            "mg": "🇲🇬 Malagasy", "sm": "🇼🇸 Gagana Samoa", "fj": "🇫🇯 Vosa Vakaviti", "to": "🇹🇴 Faka-Tonga",
+            "mi": "🇳🇿 Te Reo Māori", "haw": "🇺🇸 ʻŌlelo Hawaiʻi", "eu": "🇪🇸 Euskara", "gl": "🇪🇸 Galego",
+            "ca": "🇪🇸 Català", "co": "🇫🇷 Corsu", "gd": "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Gàidhlig", "br": "🇫🇷 Brezhoneg",
+            "kw": "🇬🇧 Kernewek", "fo": "🇫🇴 Føroyskt", "kl": "🇬🇱 Kalaallisut", "iu": "🇨🇦 Inuktitut",
+            "cr": "🇨🇦 Cree", "eo": "🌍 Esperanto", "la": "🏛️ Latina", "sa": "🇮🇳 संस्कृतम् (Sanskrit)",
+            "tl": "🇵🇭 Tagalog", "jv": "🇮🇩 Basa Jawa", "su": "🇮🇩 Basa Sunda", "ha": "🇳🇬 Hausa",
+            "ig": "🇳🇬 Igbo", "yo": "🇳🇬 Yorùbá", "ny": "🇲🇼 Chichewa", "sn": "🇿🇼 chiShona"
+        };
+
+        const langSelect = document.getElementById('langSelect');
+        Object.entries(languages).forEach(([code, name]) => {
+            const option = document.createElement('option');
+            option.value = code;
+            option.textContent = name;
+            langSelect.appendChild(option);
+        });
+        
+        // Устанавливаем английский по умолчанию в селекторе
+        langSelect.value = 'en';
+
+        // Translation via Google Translate API
+        async function translatePage(langCode) {
+            langSelect.disabled = true;
+            langSelect.style.opacity = '0.5';
+
+            if (langCode === 'en') {
+                applyTranslations(originalTexts);
+                langSelect.disabled = false;
+                langSelect.style.opacity = '1';
+                return;
+            }
+            
+            const keys = Object.keys(originalTexts);
+            const textArray = Object.values(originalTexts);
+            const query = textArray.join('\n');
+            // Теперь переводим с английского (sl=en)
+            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${langCode}&dt=t&q=${encodeURIComponent(query)}`;
+            
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                const translatedText = data[0].map(item => item[0]).join('');
+                const translatedArray = translatedText.split('\n').map(s => s.trim());
+                
+                const newTranslations = {};
+                keys.forEach((key, index) => {
+                    newTranslations[key] = translatedArray[index] || originalTexts[key];
+                });
+                
+                applyTranslations(newTranslations);
+            } catch (e) {
+                console.error("Translation error:", e);
+                alert("Translation error. Check your internet connection.");
+            } finally {
+                langSelect.disabled = false;
+                langSelect.style.opacity = '1';
+            }
+        }
+
+        function applyTranslations(dict) {
+            if (dict["pageTitle"]) document.title = dict["pageTitle"];
+
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (dict[key]) el.innerText = dict[key];
+            });
+
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.getAttribute('data-i18n-placeholder');
+                if (dict[key]) el.placeholder = dict[key];
+            });
+        }
+    </script>
+</body>
+</html>
