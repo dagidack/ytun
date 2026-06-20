@@ -1,4 +1,16 @@
-# ... existing code ...
+"""PRH BIS v1 / YTJ v3 API client for fetching recently registered Finnish B2B companies."""
+
+from __future__ import annotations
+
+import logging
+import time
+import urllib.parse
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from typing import Any, Iterator
+
+import requests
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://avoindata.prh.fi/opendata-ytj-api/v3/companies"
@@ -9,14 +21,45 @@ REQUEST_TIMEOUT = 120
 
 B2B_PATTERNS = (
     "osakeyhtiö",
-# ... existing code ...
+    "oy",
+    "yksityinen elinkeinonharjoittaja",
+    "tmi",
+    "toiminimi",
+    "kommandiittiyhtiö",
+    "ky",
+    "avoin yhtiö",
     "ay",
 )
 
 B2B_CODES = frozenset({"16", "26", "13", "14", "oy", "oyj", "tmi", "ky", "ay", "ltd"})
 
 EXCLUDE_PATTERNS = (
-# ... existing code ...
+    "aoy",
+    "asunto-osakeyhtiö",
+    "asunto osakeyhtiö",
+    "bostadsaktiebolag",
+    "housing corporation",
+    "säätiö",
+    "saatio",
+    "foundation",
+    "yhdistys",
+    "association",
+    "seurakunta",
+)
+
+
+@dataclass
+class SearchProgress:
+    """Progress snapshot emitted while searching."""
+
+    current_interval: int
+    total_intervals: int
+    date_from: str
+    date_to: str
+    found_in_interval: int
+    total_found: int
+
+
 @dataclass
 class SearchResult:
     """Final search result."""
@@ -68,7 +111,6 @@ class PRHClient:
         end_date, start_date = _get_search_date_range(days_back)
         start_date_str = start_date.isoformat()
 
-        import urllib.parse
         params = {
             "businessIdStart": "3350000-0",  # Гарантирует свежие регистрации за 2023-2026
             "maxResults": MAX_RESULTS
@@ -158,7 +200,17 @@ class PRHClient:
 
 
 def is_b2b_company(company_form: str) -> bool:
-# ... existing code ...
+    """Return True when the company form matches allowed B2B types."""
+    form = (company_form or "").strip().lower()
+    if not form:
+        return False
+
+    if any(pattern in form for pattern in EXCLUDE_PATTERNS):
+        return False
+
+    if "asunto" in form and "osakeyhtiö" in form:
+        return False
+
     if form in B2B_CODES:
         return True
 
