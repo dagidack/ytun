@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finnish B2B Lead Generator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4ecf7 100%);
+            min-height: 100vh;
+        }
+        .hero-card {
+            border: none;
+            border-radius: 1rem;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        }
+        .table-wrap {
+            max-height: 60vh;
+            overflow: auto;
+        }
+        .status-pill {
+            font-size: 0.875rem;
+        }
+        .spinner-border-sm {
+            width: 1rem;
+            height: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-xl-10">
+                <div class="card hero-card mb-4">
+                    <div class="card-body p-4 p-md-5">
+                        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+                            <div>
+                                <h1 class="h3 mb-1">Finnish B2B Lead Generator</h1>
+                                <p class="text-muted mb-0">
+                                    Find recently registered Finnish companies (Oy, TMI, KY, AY) via the PRH BIS v1 API.
+                                </p>
+                            </div>
+                            <span class="badge text-bg-primary status-pill">PRH Open Data</span>
+                        </div>
+
+                        <form id="searchForm" class="row g-3 align-items-end">
+                            <div class="col-md-4">
+                                <label for="daysBack" class="form-label fw-semibold">Days back</label>
+                                <input
+                                    type="number"
+                                    class="form-control form-control-lg"
+                                    id="daysBack"
+                                    name="daysBack"
+                                    min="1"
+                                    max="730"
+                                    value="30"
+                                    required
+                                >
+                                <div class="form-text">Common values: 30, 60, 180</div>
+                            </div>
+                            <div class="col-md-4">
+                                <button type="submit" class="btn btn-primary btn-lg w-100" id="searchBtn">
+                                    Find new companies
+                                </button>
+                            </div>
+                            <div class="col-md-4">
+                                <button type="button" class="btn btn-outline-success btn-lg w-100" id="downloadBtn" disabled>
+                                    Download CSV
+                                </button>
+                            </div>
+                        </form>
+
+                        <div id="loadingState" class="alert alert-info d-none mt-4 mb-0" role="status">
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                                <span id="loadingText">Searching...</span>
+                            </div>
+                        </div>
+
+                        <div id="errorState" class="alert alert-danger d-none mt-4 mb-0" role="alert"></div>
+                        <div id="summaryState" class="alert alert-secondary d-none mt-4 mb-0" role="status"></div>
+                    </div>
+                </div>
+
+                <div class="card hero-card">
+                    <div class="card-body p-4">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h2 class="h5 mb-0">Results</h2>
+                            <span class="text-muted" id="resultCount">0 companies</span>
+                        </div>
+
+                        <div class="table-wrap border rounded">
+                            <table class="table table-striped table-hover mb-0 align-middle">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th scope="col">Y-tunnus</th>
+                                        <th scope="col">Company Name</th>
+                                        <th scope="col">Company Form</th>
+                                        <th scope="col">Registration Date</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resultsBody">
+                                    <tr id="emptyRow">
+                                        <td colspan="4" class="text-center text-muted py-5">
+                                            Run a search to see recently registered B2B companies.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const searchForm = document.getElementById("searchForm");
+        const daysBackInput = document.getElementById("daysBack");
+        const searchBtn = document.getElementById("searchBtn");
+        const downloadBtn = document.getElementById("downloadBtn");
+        const loadingState = document.getElementById("loadingState");
+        const loadingText = document.getElementById("loadingText");
+        const errorState = document.getElementById("errorState");
+        const summaryState = document.getElementById("summaryState");
+        const resultsBody = document.getElementById("resultsBody");
+        const resultCount = document.getElementById("resultCount");
+        const emptyRow = document.getElementById("emptyRow");
+
+        let currentCompanies = [];
+
+        function setLoading(isLoading, message = "Searching...") {
+            loadingState.classList.toggle("d-none", !isLoading);
+            loadingText.textContent = message;
+            searchBtn.disabled = isLoading;
+            downloadBtn.disabled = isLoading || currentCompanies.length === 0;
+        }
+
+        function showError(message) {
+            errorState.textContent = message;
+            errorState.classList.remove("d-none");
+        }
+
+        function clearError() {
+            errorState.textContent = "";
+            errorState.classList.add("d-none");
+        }
+
+        function renderResults(companies) {
+            currentCompanies = companies;
+            resultsBody.innerHTML = "";
+
+            if (!companies.length) {
+                resultsBody.appendChild(emptyRow);
+                emptyRow.classList.remove("d-none");
+                resultCount.textContent = "0 companies";
+                downloadBtn.disabled = true;
+                return;
+            }
+
+            emptyRow.classList.add("d-none");
+
+            const fragment = document.createDocumentFragment();
+            companies.forEach((company) => {
+                const row = document.createElement("tr");
+                row.innerHTML = `
+                    <td class="font-monospace">${escapeHtml(company.businessId || "")}</td>
+                    <td>${escapeHtml(company.name || "")}</td>
+                    <td>${escapeHtml(company.companyForm || "")}</td>
+                    <td>${escapeHtml(company.registrationDate || "")}</td>
+                `;
+                fragment.appendChild(row);
+            });
+            resultsBody.appendChild(fragment);
+
+            resultCount.textContent = `${companies.length} ${companies.length === 1 ? "company" : "companies"}`;
+            downloadBtn.disabled = false;
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;");
+        }
+
+        function renderSummary(meta) {
+            if (!meta) {
+                summaryState.classList.add("d-none");
+                return;
+            }
+
+            const parts = [
+                `Searched ${meta.date_from} to ${meta.date_to}`,
+                `${meta.intervals_searched} intervals scanned`,
+                `${meta.intervals_with_data} intervals returned data`,
+            ];
+
+            if (meta.errors && meta.errors.length) {
+                parts.push(`${meta.errors.length} interval(s) failed`);
+            }
+
+            summaryState.textContent = parts.join(" · ");
+            summaryState.classList.remove("d-none");
+        }
+
+        async function runSearch(daysBack) {
+            clearError();
+            summaryState.classList.add("d-none");
+            setLoading(true, "Searching PRH registry...");
+
+            const response = await fetch("/api/search", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ days_back: daysBack, stream: true }),
+            });
+
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload.error || "Search request failed.");
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let finalResult = null;
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const chunks = buffer.split("\n\n");
+                buffer = chunks.pop() || "";
+
+                for (const chunk of chunks) {
+                    const line = chunk.split("\n").find((entry) => entry.startsWith("data: "));
+                    if (!line) continue;
+
+                    const payload = JSON.parse(line.slice(6));
+                    if (payload.type === "SearchProgress") {
+                        setLoading(
+                            true,
+                            `Searching interval ${payload.current_interval}/${payload.total_intervals} ` +
+                            `(${payload.date_from} – ${payload.date_to})… Found so far: ${payload.total_found}`
+                        );
+                    } else if (payload.type === "SearchResult") {
+                        finalResult = payload;
+                    }
+                }
+            }
+
+            if (!finalResult) {
+                throw new Error("Search finished without a result.");
+            }
+
+            renderResults(finalResult.companies || []);
+            renderSummary({
+                date_from: finalResult.date_from,
+                date_to: finalResult.date_to,
+                intervals_searched: finalResult.intervals_searched,
+                intervals_with_data: finalResult.intervals_with_data,
+                errors: finalResult.errors,
+            });
+        }
+
+        searchForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const daysBack = Number(daysBackInput.value);
+
+            if (!Number.isInteger(daysBack) || daysBack < 1 || daysBack > 730) {
+                showError("Please enter a valid number of days between 1 and 730.");
+                return;
+            }
+
+            try {
+                await runSearch(daysBack);
+            } catch (error) {
+                showError(error.message || "Unexpected error during search.");
+            } finally {
+                setLoading(false);
+            }
+        });
+
+        downloadBtn.addEventListener("click", async () => {
+            if (!currentCompanies.length) return;
+
+            try {
+                downloadBtn.disabled = true;
+                const response = await fetch("/api/export", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ companies: currentCompanies }),
+                });
+
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw new Error(payload.error || "CSV export failed.");
+                }
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "finnish_b2b_leads.csv";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                showError(error.message || "Unexpected error during export.");
+            } finally {
+                downloadBtn.disabled = currentCompanies.length === 0;
+            }
+        });
+    </script>
+</body>
+</html>
