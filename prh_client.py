@@ -1,65 +1,22 @@
-"""PRH BIS v1 API client for fetching recently registered Finnish B2B companies."""
-
-from __future__ import annotations
-
-import logging
-import time
-from dataclasses import dataclass, field
-from datetime import date, timedelta
-from typing import Any, Iterator
-
-import requests
-
+# ... existing code ...
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://avoindata.prh.fi/bis/v1"
+BASE_URL = "https://avoindata.prh.fi/opendata-ytj-api/v3/companies"
 REFERENCE_END_DATE = date(2024, 5, 20)  # Used when system clock is ahead of real time
-CHUNK_DAYS = 9  # 10-day inclusive intervals (7–10 day chunks)
 REQUEST_DELAY = 0.5
 MAX_RESULTS = 1000
 REQUEST_TIMEOUT = 120
 
 B2B_PATTERNS = (
     "osakeyhtiö",
-    "oy",
-    "yksityinen elinkeinonharjoittaja",
-    "tmi",
-    "toiminimi",
-    "kommandiittiyhtiö",
-    "ky",
-    "avoin yhtiö",
+# ... existing code ...
     "ay",
 )
 
-B2B_CODES = frozenset({"oy", "oyj", "tmi", "ky", "ay", "ltd"})
+B2B_CODES = frozenset({"16", "26", "13", "14", "oy", "oyj", "tmi", "ky", "ay", "ltd"})
 
 EXCLUDE_PATTERNS = (
-    "aoy",
-    "asunto-osakeyhtiö",
-    "asunto osakeyhtiö",
-    "bostadsaktiebolag",
-    "housing corporation",
-    "säätiö",
-    "saatio",
-    "foundation",
-    "yhdistys",
-    "association",
-    "seurakunta",
-)
-
-
-@dataclass
-class SearchProgress:
-    """Progress snapshot emitted while searching."""
-
-    current_interval: int
-    total_intervals: int
-    date_from: str
-    date_to: str
-    found_in_interval: int
-    total_found: int
-
-
+# ... existing code ...
 @dataclass
 class SearchResult:
     """Final search result."""
@@ -74,86 +31,30 @@ class SearchResult:
 
 
 class PRHClient:
-    """Client for the Finnish PRH BIS v1 open data API."""
+    """Client for the Finnish PRH YTJ v3 open data API."""
 
     def __init__(
         self,
         base_url: str = BASE_URL,
-        chunk_days: int = CHUNK_DAYS,
         request_delay: float = REQUEST_DELAY,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.chunk_days = chunk_days
         self.request_delay = request_delay
         self.session = requests.Session()
         self.session.headers.update(
             {
                 "Accept": "application/json",
-                "User-Agent": "FinnishLeadGenerator/1.0",
+                "User-Agent": "FinnishLeadGenerator/2.0",
             }
         )
 
     def fetch_companies(self, days_back: int) -> SearchResult:
         """Fetch B2B companies registered within the last *days_back* days."""
-        companies: list[dict[str, str]] = []
-        seen_ids: set[str] = set()
-        errors: list[str] = []
-        intervals_with_data = 0
-
-        end_date, start_date = _get_search_date_range(days_back)
-        intervals = list(_iter_date_chunks(start_date, end_date, self.chunk_days))
-
-        for index, (chunk_start, chunk_end) in enumerate(intervals, start=1):
-            date_from = chunk_start.isoformat()
-            date_to = chunk_end.isoformat()
-            found_in_interval = 0
-
-            try:
-                raw_results = self._fetch_interval(date_from, date_to)
-            except requests.RequestException as exc:
-                message = f"{date_from} – {date_to}: {exc}"
-                logger.warning(message)
-                errors.append(message)
-                time.sleep(self.request_delay)
-                continue
-
-            if raw_results:
-                intervals_with_data += 1
-
-            for raw in raw_results:
-                company = _normalize_company(raw)
-                if not company:
-                    continue
-                if not is_b2b_company(company["companyForm"]):
-                    continue
-                business_id = company["businessId"]
-                if business_id in seen_ids:
-                    continue
-                seen_ids.add(business_id)
-                companies.append(company)
-                found_in_interval += 1
-
-            logger.info(
-                "Interval %s/%s (%s – %s): %s B2B companies",
-                index,
-                len(intervals),
-                date_from,
-                date_to,
-                found_in_interval,
-            )
-
-            if index < len(intervals):
-                time.sleep(self.request_delay)
-
-        return SearchResult(
-            companies=companies,
-            days_back=days_back,
-            date_from=start_date.isoformat(),
-            date_to=end_date.isoformat(),
-            intervals_searched=len(intervals),
-            intervals_with_data=intervals_with_data,
-            errors=errors,
-        )
+        result = None
+        for event in self.fetch_companies_with_progress(days_back):
+            if isinstance(event, SearchResult):
+                result = event
+        return result or SearchResult([], days_back, "", "", 0, 0)
 
     def fetch_companies_with_progress(
         self, days_back: int
@@ -165,57 +66,84 @@ class PRHClient:
         intervals_with_data = 0
 
         end_date, start_date = _get_search_date_range(days_back)
-        intervals = list(_iter_date_chunks(start_date, end_date, self.chunk_days))
+        start_date_str = start_date.isoformat()
 
-        for index, (chunk_start, chunk_end) in enumerate(intervals, start=1):
-            date_from = chunk_start.isoformat()
-            date_to = chunk_end.isoformat()
+        import urllib.parse
+        params = {
+            "businessIdStart": "3350000-0",  # Гарантирует свежие регистрации за 2023-2026
+            "maxResults": MAX_RESULTS
+        }
+        url = f"{self.base_url}?{urllib.parse.urlencode(params)}"
+        
+        current_page = 1
+        max_pages = 50
+
+        while url and current_page <= max_pages:
             found_in_interval = 0
 
             try:
-                raw_results = self._fetch_interval(date_from, date_to)
+                response = self.session.get(url, timeout=REQUEST_TIMEOUT)
+                if response.status_code == 404:
+                    break
+                response.raise_for_status()
+                payload = response.json()
             except requests.RequestException as exc:
-                message = f"{date_from} – {date_to}: {exc}"
+                message = f"Page {current_page}: {exc}"
                 logger.warning(message)
                 errors.append(message)
                 yield SearchProgress(
-                    current_interval=index,
-                    total_intervals=len(intervals),
-                    date_from=date_from,
-                    date_to=date_to,
+                    current_interval=current_page,
+                    total_intervals=max_pages,
+                    date_from=start_date_str,
+                    date_to=end_date.isoformat(),
                     found_in_interval=0,
                     total_found=len(companies),
                 )
-                if index < len(intervals):
-                    time.sleep(self.request_delay)
+                current_page += 1
+                time.sleep(self.request_delay)
                 continue
 
-            if raw_results:
+            batch = payload.get("companies", payload.get("results", []))
+            if batch:
                 intervals_with_data += 1
 
-            for raw in raw_results:
-                company = _normalize_company(raw)
-                if not company:
-                    continue
-                if not is_b2b_company(company["companyForm"]):
-                    continue
-                business_id = company["businessId"]
-                if business_id in seen_ids:
-                    continue
-                seen_ids.add(business_id)
-                companies.append(company)
-                found_in_interval += 1
+            for raw in batch:
+                reg_date = str(raw.get("registrationDate") or "").strip()
+                # Фильтруем по дате локально, т.к. v3 этого не умеет
+                if reg_date and reg_date >= start_date_str:
+                    company = _normalize_company(raw)
+                    if not company:
+                        continue
+                    if not is_b2b_company(company["companyForm"]):
+                        continue
+                    
+                    business_id = company["businessId"]
+                    if business_id in seen_ids:
+                        continue
+                        
+                    seen_ids.add(business_id)
+                    companies.append(company)
+                    found_in_interval += 1
 
             yield SearchProgress(
-                current_interval=index,
-                total_intervals=len(intervals),
-                date_from=date_from,
-                date_to=date_to,
+                current_interval=current_page,
+                total_intervals=max_pages,
+                date_from=start_date_str,
+                date_to=end_date.isoformat(),
                 found_in_interval=found_in_interval,
                 total_found=len(companies),
             )
 
-            if index < len(intervals):
+            next_url = payload.get("nextResultsUri")
+            if not next_url and "links" in payload:
+                for link in payload["links"]:
+                    if link.get("rel") == "next":
+                        next_url = link.get("href")
+                        break
+            url = next_url
+
+            current_page += 1
+            if url:
                 time.sleep(self.request_delay)
 
         yield SearchResult(
@@ -223,59 +151,14 @@ class PRHClient:
             days_back=days_back,
             date_from=start_date.isoformat(),
             date_to=end_date.isoformat(),
-            intervals_searched=len(intervals),
+            intervals_searched=current_page - 1,
             intervals_with_data=intervals_with_data,
             errors=errors,
         )
 
-    def _fetch_interval(self, date_from: str, date_to: str) -> list[dict[str, Any]]:
-        """Fetch all companies for a single date interval, following pagination."""
-        params: dict[str, str | int] | None = {
-            "companyRegistrationFrom": date_from,
-            "companyRegistrationTo": date_to,
-            "maxResults": MAX_RESULTS,
-            "totalResults": "false",
-        }
-        url: str | None = self.base_url
-        results: list[dict[str, Any]] = []
-
-        while url:
-            response = self._get(url, params=params)
-            params = None
-
-            if response.status_code == 404:
-                return results
-
-            if response.status_code != 200:
-                response.raise_for_status()
-
-            payload = response.json()
-            batch = payload.get("results", [])
-            if isinstance(batch, list):
-                results.extend(batch)
-
-            url = payload.get("nextResultsUri")
-            if url:
-                time.sleep(self.request_delay)
-
-        return results
-
-    def _get(self, url: str, params: dict[str, str | int] | None = None) -> requests.Response:
-        return self.session.get(url, params=params, timeout=REQUEST_TIMEOUT)
-
 
 def is_b2b_company(company_form: str) -> bool:
-    """Return True when the company form matches allowed B2B types."""
-    form = (company_form or "").strip().lower()
-    if not form:
-        return False
-
-    if any(pattern in form for pattern in EXCLUDE_PATTERNS):
-        return False
-
-    if "asunto" in form and "osakeyhtiö" in form:
-        return False
-
+# ... existing code ...
     if form in B2B_CODES:
         return True
 
@@ -291,8 +174,20 @@ def _normalize_company(raw: dict[str, Any]) -> dict[str, str] | None:
     if not business_id:
         return None
 
+    # В v3 имя может лежать в массиве names
     name = str(raw.get("name") or "").strip()
+    if not name and "names" in raw:
+        names = raw.get("names", [])
+        if names and isinstance(names, list):
+            name = str(names[0].get("name") or "").strip()
+
+    # В v3 форма собственности может лежать в массиве companyForms
     company_form = str(raw.get("companyForm") or "").strip()
+    if not company_form and "companyForms" in raw:
+        forms = raw.get("companyForms", [])
+        if forms and isinstance(forms, list):
+            company_form = str(forms[0].get("type") or "").strip()
+
     registration_date = str(raw.get("registrationDate") or "").strip()
 
     return {
@@ -309,14 +204,3 @@ def _get_search_date_range(days_back: int) -> tuple[date, date]:
     end_date = REFERENCE_END_DATE if today.year > 2024 else today
     start_date = end_date - timedelta(days=days_back)
     return end_date, start_date
-
-
-def _iter_date_chunks(
-    start_date: date, end_date: date, chunk_days: int
-) -> Iterator[tuple[date, date]]:
-    """Yield inclusive date intervals covering [start_date, end_date]."""
-    current = start_date
-    while current <= end_date:
-        chunk_end = min(current + timedelta(days=chunk_days), end_date)
-        yield current, chunk_end
-        current = chunk_end + timedelta(days=1)
